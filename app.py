@@ -45,10 +45,9 @@ def extract_takeaways(messages, chapter):
     {context}
     """
     
-    # Gemini's way of generating content
     response = model.generate_content(prompt)
     
-    # Clean the response text (Gemini sometimes wraps JSON in ```json blocks)
+    # Clean the response text
     text = response.text
     if "```json" in text:
         text = text.split("```json")[1].split("```")[0]
@@ -331,7 +330,7 @@ def main():
     
                 pathway = generate_10min_pathway(topic_to_fix, st.session_state.current_chapter)
     
-                # Build plain markdown (no raw HTML) — works cleanly everywhere
+                # Build plain markdown
                 response = "### 🛤️ Your 10-Minute Pathway to Get Unstuck\n\n"
     
                 for i, step in enumerate(pathway["steps"], 1):
