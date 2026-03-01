@@ -1,78 +1,59 @@
 import streamlit as st
-import google.generativeai as genai
 import json
 import os
+import requests
 from datetime import datetime
-from io import StringIO
 from dotenv import load_dotenv
+
 load_dotenv()
 
 # ============================================
 # CONFIGURATION
 # ============================================
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+
+# Toggle this to True when you are on an AMD machine with a local server running (Not yet tested)
+USE_LOCAL_AMD = False 
 
 KNOWLEDGE_FILE = "knowledge_notes.json"
-model = genai.GenerativeModel('gemini-2.5-flash-lite')
+
+def call_llm(prompt):
+    if USE_LOCAL_AMD:
+        # AMD Lemonade Server / Ollama
+        url = "http://localhost:8000/v1/chat/completions" 
+        headers = {"Authorization": f"Bearer {os.getenv('AMD_WORKBENCH_API_KEY')}"}
+        payload = {
+            "model": "llama3", # Or your quantized AMD model
+            "messages": [{"role": "user", "content": prompt}]
+        }
+        response = requests.post(url, json=payload, headers=headers)
+        return response.json()['choices'][0]['message']['content']
+    else:
+        # Fallback if no AMD
+        import google.generativeai as genai
+        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        response = model.generate_content(prompt)
+        return response.text
 
 # ============================================
-# STORAGE FUNCTIONS
+# EXTRACTION FUNCTIONS
 # ============================================
-def load_knowledge():
-    if os.path.exists(KNOWLEDGE_FILE):
-        with open(KNOWLEDGE_FILE, "r") as f:
-            return json.load(f)
-    return {"chapters": {}, "concepts": [], "takeaways": [], "confusion_points": [], "definitions": []}
-
-def save_knowledge(knowledge):
-    with open(KNOWLEDGE_FILE, "w") as f:
-        json.dump(knowledge, f, indent=2)
-
 def extract_takeaways(messages, chapter):
     context = "\n".join([f"{m['role']}: {m['content']}" for m in messages[-12:]])
+    prompt = f"Analyze this study conversation about {chapter} and return ONLY a JSON object with keys: concepts, takeaways, confusion_points, definitions. CONVERSATION: {context}"
     
-    prompt = f"""
-    Analyze this study conversation about "{chapter}" and extract knowledge in JSON.
-    Return ONLY valid JSON.
-    Format:
-    {{
-        "concepts": ["concept1"],
-        "takeaways": ["summary"],
-        "confusion_points": ["struggles"],
-        "definitions": ["term: definition"]
-    }}
-    CONVERSATION:
-    {context}
-    """
-    
-    # Gemini's way of generating content
-    response = model.generate_content(prompt)
-    
-    # Clean the response text (Gemini sometimes wraps JSON in ```json blocks)
-    text = response.text
-    if "```json" in text:
-        text = text.split("```json")[1].split("```")[0]
-    elif "```" in text:
-        text = text.split("```")[1].split("```")[0]
-        
-    return json.loads(text.strip())
+    raw_text = call_llm(prompt)
+    # Cleaning logic to ensure valid JSON
+    clean_json = raw_text.replace('```json', '').replace('```', '').strip()
+    return json.loads(clean_json)
 
 def generate_10min_pathway(confusion_points, chapter):
-    # If confusion_points is empty, we provide a default string
     topic = confusion_points if confusion_points else "general concepts"
+    prompt = f"The user is stuck on {topic} in {chapter}. Return a JSON action plan: {{ 'steps': [ {{'time': '2 min', 'action': '...', 'detail': '...'}} ] }}"
     
-    prompt = f"""
-    The user is studying {chapter} and is stuck on: {topic}.
-    Create a specific 10-minute action plan. 
-    Do NOT mention square brackets or placeholders.
-    Return ONLY valid JSON:
-    {{ "steps": [ {{"time": "2 min", "action": "...", "detail": "..."}} ] }}
-    """
-    
-    response = model.generate_content(prompt)
-    # Aggressive cleaning for Gemini
-    text = response.text.replace('```json', '').replace('```', '').strip()
-    return json.loads(text)
+    raw_text = call_llm(prompt)
+    clean_json = raw_text.replace('```json', '').replace('```', '').strip()
+    return json.loads(clean_json)
 
 # ============================================
 # EXPORT FUNCTIONS
@@ -331,7 +312,7 @@ def main():
     
                 pathway = generate_10min_pathway(topic_to_fix, st.session_state.current_chapter)
     
-                # Build plain markdown (no raw HTML) — works cleanly everywhere
+                # Build plain markdown
                 response = "### 🛤️ Your 10-Minute Pathway to Get Unstuck\n\n"
     
                 for i, step in enumerate(pathway["steps"], 1):
